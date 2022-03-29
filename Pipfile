@@ -1,0 +1,17 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+requests = "*"
+pygrib = "*"
+xarray = "*"
+cartopy = "==0.19.0.post1"
+matplotlib = "*"
+netcdf4 = "*"
+
+[requires]
+python_version = "3.7"

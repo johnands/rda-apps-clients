@@ -57,8 +57,7 @@ def query(args=None):
     args_dict = args.__dict__
     func,params = get_selected_function(args_dict)
     result = func(params)
-    if not args.noprint:
-        print(json.dumps(result, indent=3))
+    if args.print: print(json.dumps(result, indent=3))
     return result
 
 def add_ds_str(ds_num):
@@ -155,10 +154,10 @@ def get_parser():
     """
     description = "Queries NCAR RDA REST API."
     parser = argparse.ArgumentParser(prog='rdams', description=description)
-    parser.add_argument('-noprint', '-np',
+    parser.add_argument('-print', '-p',
             action='store_true',
             required=False,
-            help="Do not print result of queries.")
+            help="Print result of queries.")
     parser.add_argument('-use_netrc', '-un',
             action='store_true',
             required=False,
@@ -265,20 +264,37 @@ def download_files(filelist, out_dir='./', cookie_file=None):
     """
     if cookie_file is None:
         cookies = get_cookies()
+
+    n_retries = 10
     for _file in filelist:
-        file_base = os.path.basename(_file)
-        out_file = out_dir + file_base
-        print('Downloading',file_base)
-        req = requests.get(_file, cookies=cookies, allow_redirects=True, stream=True)
-        filesize = int(req.headers['Content-length'])
-        with open(out_file, 'wb') as outfile:
-            chunk_size=1048576
-            for chunk in req.iter_content(chunk_size=chunk_size):
-                outfile.write(chunk)
-                if chunk_size < filesize:
-                    check_file_status(out_file, filesize)
-        check_file_status(out_file, filesize)
-        print()
+        print('\nDownloading', _file)
+        for retry in range(1, n_retries+1):
+            try:
+                file_base = os.path.basename(_file)
+                out_file = out_dir + file_base
+                req = requests.get(_file, cookies=cookies, allow_redirects=True, stream=True)
+                
+                filesize = int(req.headers['Content-length'])
+                with open(out_file, 'wb') as outfile:
+                    chunk_size = 1048576
+                    for chunk in req.iter_content(chunk_size=chunk_size):
+                        outfile.write(chunk)
+                        if chunk_size < filesize:
+                            check_file_status(out_file, filesize)
+                
+                check_file_status(out_file, filesize)
+            
+            except Exception:
+                import traceback 
+                if retry < n_retries:
+                    print('Failed to download {} on try {}:'.format(_file, retry))
+                else:
+                    print('Giving up on file {}'.format(_file))
+                traceback.print_exc()
+            else:
+                print('Succesfully downloaded file {}'.format(_file))
+                break
+                    
 
 def get_authentication(pwfile=DEFAULT_AUTH_FILE):
     """Attempts to get authentication.
@@ -479,7 +495,7 @@ def get_filelist(request_idx):
     return ret.json()
 
 
-def download(request_idx):
+def download(request_idx, target_dir='./'):
     """Download files given request Index
 
     Args:
@@ -502,7 +518,7 @@ def download(request_idx):
     web_files = list(map(lambda x: x['web_path'], filelist))
 
     # Only download unique files.
-    download_files(set(web_files))
+    download_files(set(web_files), out_dir=target_dir)
     return ret
 
 def globus_download(request_idx):
