@@ -252,7 +252,7 @@ def check_file_status(filepath, filesize):
     sys.stdout.write('%.3f %s' % (percent_complete, '% Completed'))
     sys.stdout.flush()
 
-def download_files(filelist, out_dir='./', cookie_file=None):
+def download_files(filelist, out_dir='.', cookie_file=None):
     """Download files in a list.
 
     Args:
@@ -270,8 +270,9 @@ def download_files(filelist, out_dir='./', cookie_file=None):
         print('\nDownloading', _file)
         for retry in range(1, n_retries+1):
             try:
+                os.makedirs(out_dir, exist_ok=True)
                 file_base = os.path.basename(_file)
-                out_file = out_dir + file_base
+                out_file = '{}/{}'.format(out_dir, file_base)
                 req = requests.get(_file, cookies=cookies, allow_redirects=True, stream=True)
                 
                 filesize = int(req.headers['Content-length'])
@@ -495,7 +496,7 @@ def get_filelist(request_idx):
     return ret.json()
 
 
-def download(request_idx, target_dir='./'):
+def download(request_idx, target_dir='.'):
     """Download files given request Index
 
     Args:
