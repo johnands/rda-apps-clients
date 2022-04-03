@@ -36,7 +36,7 @@ def get_solar_products(metadata):
     # solar - all products
     param_vars = list(filter(lambda x: x['param'] == 'DSWRF', metadata))
     products = list(set([item['product'] for item in param_vars]))
-    #_, products = zip(*sorted([(int(product.split('+')[-1][:-1]), product) for product in products if product.startswith('6-hour Average')], key=lambda x: x[0]))
+    #_, products = zip(*sorted([(int(product.split('+')[-1][:-1]), product) for product in products if product.startswith('12-hour Average')], key=lambda x: x[0]))
     return products
 
 def get_parameter_set(set_name, metadata):
@@ -54,6 +54,11 @@ def get_parameter_set(set_name, metadata):
         params = 'TMP'
         levels = 'HTGL:2'
         products = '/'.join(get_instant_products(metadata))
+        return params, levels, products
+    elif set_name == 'solar':
+        params = 'DSWRF'
+        levels = 'SFC:0'
+        products = '/'.join(get_solar_products(metadata))
         return params, levels, products
     else:
         raise ValueError('Parameter set {} not implemented'.format(set_name))
@@ -103,14 +108,26 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--param_set', required=True)
-    parser.add_argument('--from_to', required=True, nargs=2)
-    parser.add_argument('--target_dir', required=True)
-    parser.add_argument('--download', action='store_true')
-    parser.add_argument('--purge', action='store_true')
+    subparser = parser.add_subparsers(title='command', dest='command')
+
+    request_parser = subparser.add_parser('request', help='Make a new data request, and (optional) download.')
+    request_parser.add_argument('--param_set', required=True)
+    request_parser.add_argument('--from_to', required=True, nargs=2)
+    request_parser.add_argument('--target_dir', required=True)
+    request_parser.add_argument('--download', action='store_true')
+    request_parser.add_argument('--purge', action='store_true')
+
+    download_parser = subparser.add_parser('download', help='Download previously requested dataset.')
+    download_parser.add_argument('--request_id', required=True)
+    download_parser.add_argument('--target_dir', required=True)
+    download_parser.add_argument('--purge', action='store_true')
 
     args = parser.parse_args()
-    request_data(args)
+    if args.command == 'request':
+        request_data(args)
+    else:
+        download_when_ready(args.request_id, target_dir=args.target_dir)
+        if args.purge: rc.purge_request(args.request_id)
 
 
 if __name__ == '__main__':
