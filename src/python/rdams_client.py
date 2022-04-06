@@ -594,7 +594,7 @@ def purge_request(request_idx):
         None
     """
     url = BASE_URL + 'request/'
-    url += request_idx
+    url += str(request_idx)
 
     user_auth = get_authentication()
     ret = requests.delete(url, auth=user_auth)
@@ -630,4 +630,9 @@ def get_selected_function(args_dict):
 
 if __name__ == "__main__":
     """Calls main method"""
-    query(sys.argv[1:])
+    #query(sys.argv[1:])
+
+    response = get_status()
+    for data in response['result']:
+        print(data['request_index'])
+

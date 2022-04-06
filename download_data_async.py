@@ -1,5 +1,6 @@
 import time
 import pendulum as pm
+import asyncio
 import src.python.rdams_client as rc
 
 
@@ -17,6 +18,9 @@ def download_when_ready(request_id, target_dir='./data', wait_interval=10):
         print(request_status)
         print('Not yet available. Waiting ' + str(wait_interval) + ' seconds.' )
         time.sleep(wait_interval)
+
+async def download_files():
+    pass
 
 def get_instant_products(metadata):
     # wind/temperature/humidity/pressure - exclude analysis and averages
@@ -61,8 +65,8 @@ def get_parameter_set(set_name, metadata):
         raise ValueError('Parameter set {} not implemented'.format(set_name))
 
 def split_time_interval(from_dt, to_dt):
-    intervals = list((to_dt - from_dt).range('months', 3))
-    #intervals = list((to_dt - from_dt).range('days'))
+    #intervals = list((to_dt - from_dt).range('months', 3))
+    intervals = list((to_dt - from_dt).range('days'))
     if len(intervals) == 1:
         intervals = [(from_dt, to_dt)]
     else:
@@ -94,8 +98,8 @@ def request_data(args):
     template_dict['datetype'] = 'init'
     template_dict['param'] = params
     template_dict['level'] = levels
-    template_dict['product'] = products
-    #template_dict['product'] = '6-hour Forecast'
+    #template_dict['product'] = products
+    template_dict['product'] = '6-hour Forecast'
     template_dict['slat'] = -90
     template_dict['nlat'] = 90
     template_dict['wlon'] = -180
