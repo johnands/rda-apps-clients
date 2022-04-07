@@ -1,22 +1,31 @@
 import time
 import pendulum as pm
+import numpy as np
 import src.python.rdams_client as rc
 
 
-def download_when_ready(request_id, target_dir='./data', wait_interval=10):
+def download_when_ready(request_id, target_dir='./data', wait_interval=10*60):
     while True:
-        response = rc.get_status(request_id)
-        request_status = response['result']['status']
-        if request_status == 'Completed':
-            start = time.time()
-            rc.download(request_id, target_dir=target_dir)
-            end = time.time()
-            print('Time elapsed: {} s'.format(end - start))
-            break
+        try:
+            response = rc.get_status(request_id)
+            request_status = response['result']['status']
+            print(request_status)
+
+            if request_status == 'Completed':
+                start = time.time()
+                rc.download(request_id, target_dir=target_dir)
+                end = time.time()
+                print('Time elapsed: {} s'.format(end - start))
+                break
+                
+            print('Not yet available. Waiting ' + str(wait_interval) + ' seconds.' )
+
+        except Exception:
+            import traceback
+            traceback.print_exc()
         
-        print(request_status)
-        print('Not yet available. Waiting ' + str(wait_interval) + ' seconds.' )
-        time.sleep(wait_interval)
+        finally:
+            time.sleep(wait_interval)
 
 def get_instant_products(metadata):
     # wind/temperature/humidity/pressure - exclude analysis and averages
@@ -34,6 +43,8 @@ def get_solar_products(metadata):
     # solar - 3 and 6 hour averages only, not 12 hour averages (not available after 06-12-2019)
     param_vars = list(filter(lambda x: x['param'] == 'DSWRF', metadata))
     products = list(set([item['product'] for item in param_vars if not item['product'].startswith('12-hour Average')]))
+    #products = list(set([item['product'] for item in param_vars if item['product'].startswith('3-hour Average')]))
+    #products = list(set([item['product'] for item in param_vars]))
     return products
 
 def get_parameter_set(set_name, metadata):
@@ -46,6 +57,11 @@ def get_parameter_set(set_name, metadata):
         params = 'U GRD/V GRD/R H/DSWRF/A PCP/PRMSL'
         levels = 'HTGL:2/10/100;SFC:0;MSL:0'
         products = '/'.join(get_instant_products(metadata) + get_precip_products(metadata) + get_solar_products(metadata))
+        return params, levels, products
+    elif set_name == 'all_except_temp_solar':
+        params = 'U GRD/V GRD/R H/A PCP/PRMSL'
+        levels = 'HTGL:2/10/100;SFC:0;MSL:0'
+        products = '/'.join(get_instant_products(metadata) + get_precip_products(metadata))
         return params, levels, products
     elif set_name == 'temp':
         params = 'TMP'
@@ -104,22 +120,40 @@ def request_data(args):
     
     answer = input('Is this okay (y/n)?')
     if answer == 'y':
-        request_ids = []
-        for start_date, end_date in time_intervals:
-            print('Requesting data from {} to {}'.format(start_date, end_date))
-            
-            template_dict['date'] = '{}0000/to/{}0000'.format(start_date.format('YYYYMMDD'), end_date.format('YYYYMMDD'))
+        time_intervals_not_requested = set(time_intervals)
+        requests_to_download = set()
+        while len(time_intervals_not_requested) > 0 or len(requests_to_download) > 0:
+            try:
+                print('\nNew iteration:')
+                print('time intervals not requested:', time_intervals_not_requested)
+                print('requests to download:', requests_to_download)
+                for start_date, end_date in sorted(list(time_intervals_not_requested)):
+                    print('Requesting data from {} to {}'.format(start_date, end_date))
+                    
+                    template_dict['date'] = '{}0000/to/{}0000'.format(start_date.format('YYYYMMDD'), end_date.format('YYYYMMDD'))
 
-            response = rc.submit_json(template_dict)
-            if response['code'] != 200:
-                print('Request could not be made:\n{}'.format(response))
-                continue
+                    response = rc.submit_json(template_dict)
+                    if response['code'] != 200:
+                        print('Request could not be made:\n{}'.format(response))
+                        continue
+                    
+                    time_intervals_not_requested.remove((start_date, end_date))
+                    if args.download: requests_to_download.add(response['result']['request_id'])
+                
+                if args.download:
+                    for request_id in sorted(list(requests_to_download)):
+                        print('Starting downloading service for request {}'.format(request_id))
+                        download_when_ready(request_id, target_dir=args.target_dir)
+                        requests_to_download.remove(request_id)
+                        if args.purge: rc.purge_request(request_id)
 
-            request_ids.append(response['result']['request_id'])
-        
-        for request_id in request_ids:
-            if args.download: download_when_ready(request_id, target_dir=args.target_dir)
-            if args.purge: rc.purge_request(request_id)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
+            finally:
+                time.sleep(60*5)
+                #time.sleep(3)
 
 def main():
     import argparse

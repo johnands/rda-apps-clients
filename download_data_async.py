@@ -4,23 +4,50 @@ import asyncio
 import src.python.rdams_client as rc
 
 
-def download_when_ready(request_id, target_dir='./data', wait_interval=10):
+def download_when_ready(request_id, target_dir='./data', wait_interval=10*60):
     while True:
-        response = rc.get_status(request_id)
-        request_status = response['result']['status']
-        if request_status == 'Completed':
-            start = time.time()
-            rc.download(request_id, target_dir=target_dir)
-            end = time.time()
-            print('Time elapsed: {} s'.format(end - start))
-            break
-        
-        print(request_status)
-        print('Not yet available. Waiting ' + str(wait_interval) + ' seconds.' )
-        time.sleep(wait_interval)
+        try:
+            response = rc.get_status(request_id)
+            request_status = response['result']['status']
+            print(request_status)
 
-async def download_files():
-    pass
+            if request_status == 'Completed':
+                start = time.time()
+                rc.download(request_id, target_dir=target_dir)
+                end = time.time()
+                print('Time elapsed: {} s'.format(end - start))
+                break
+                
+            print('Not yet available. Waiting ' + str(wait_interval) + ' seconds.' )
+
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        
+        finally:
+            time.sleep(wait_interval)
+
+def request_and_download_worker(template_dict, target_dir):
+    """Convert this function into async"""
+
+    while True:
+        try:
+            response = rc.submit_json(template_dict)
+            if response['code'] == 200:
+                print('Request was successful:\n{}'.format(response))
+                break
+        
+            print('Request could not be made:\n{}'.format(response))
+            print('Trying again in 10 minutes')
+
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            time.sleep(10*60)
+    
+    download_when_ready(response['result']['request_id'], target_dir=target_dir)
 
 def get_instant_products(metadata):
     # wind/temperature/humidity/pressure - exclude analysis and averages

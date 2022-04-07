@@ -16,3 +16,5 @@ for message in grib:
     print('Lon min/max:', message['longitudeOfFirstGridPointInDegrees'], message['longitudeOfLastGridPointInDegrees'])
     data, lats, lons = message.data()
     print('Data shape/size:', data.shape, data.size)
+
+grib.close()
