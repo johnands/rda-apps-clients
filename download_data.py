@@ -1,10 +1,13 @@
 import time
 import pendulum as pm
-import numpy as np
+import os
 import src.python.rdams_client as rc
 
 
-def download_when_ready(request_id, target_dir='./data', wait_interval=10*60):
+WAIT_INTERVAL = int(os.getenv('WAIT_INTERVAL', 60*10))
+
+
+def download_when_ready(request_id, target_dir='./data'):
     while True:
         try:
             response = rc.get_status(request_id)
@@ -18,14 +21,13 @@ def download_when_ready(request_id, target_dir='./data', wait_interval=10*60):
                 print('Time elapsed: {} s'.format(end - start))
                 break
                 
-            print('Not yet available. Waiting ' + str(wait_interval) + ' seconds.' )
+            print('Not yet available. Waiting ' + str(WAIT_INTERVAL) + ' seconds.' )
+            time.sleep(WAIT_INTERVAL)
 
         except Exception:
             import traceback
             traceback.print_exc()
-        
-        finally:
-            time.sleep(wait_interval)
+            time.sleep(WAIT_INTERVAL)
 
 def get_instant_products(metadata):
     # wind/temperature/humidity/pressure - exclude analysis and averages
@@ -34,17 +36,16 @@ def get_instant_products(metadata):
     return products
 
 def get_precip_products(metadata):
-    # precipitation - only total accumulated
+    # precipitation - total accumulated only available after 2019-06-12, before that only 3- and 6-hour accumulated are available
     param_vars = list(filter(lambda x: x['param'] == 'A PCP', metadata))
-    products = list(set([item['product'] for item in param_vars if '(initial+0 ' in item['product']]))
+    #products = list(set([item['product'] for item in param_vars if '(initial+0 ' in item['product']]))
+    products = list(set([item['product'] for item in param_vars if item['product'].startswith('3-hour') or item['product'].startswith('6-hour')]))
     return products
 
 def get_solar_products(metadata):
-    # solar - 3 and 6 hour averages only, not 12 hour averages (not available after 06-12-2019)
+    # solar - all products (for hours > 240, 12 hour averages are returned before 2019-06-12, and 6 hour averages after)
     param_vars = list(filter(lambda x: x['param'] == 'DSWRF', metadata))
-    products = list(set([item['product'] for item in param_vars if not item['product'].startswith('12-hour Average')]))
-    #products = list(set([item['product'] for item in param_vars if item['product'].startswith('3-hour Average')]))
-    #products = list(set([item['product'] for item in param_vars]))
+    products = list(set([item['product'] for item in param_vars]))
     return products
 
 def get_parameter_set(set_name, metadata):
@@ -73,12 +74,16 @@ def get_parameter_set(set_name, metadata):
         levels = 'SFC:0'
         products = '/'.join(get_solar_products(metadata))
         return params, levels, products
+    elif set_name == 'precip':
+        params = 'A PCP'
+        levels = 'SFC:0'
+        products = '/'.join(get_precip_products(metadata))
+        return params, levels, products
     else:
         raise ValueError('Parameter set {} not implemented'.format(set_name))
 
 def split_time_interval(from_dt, to_dt):
     intervals = list((to_dt - from_dt).range('months', 3))
-    #intervals = list((to_dt - from_dt).range('days'))
     if len(intervals) == 1:
         intervals = [(from_dt, to_dt)]
     else:
@@ -111,7 +116,6 @@ def request_data(args):
     template_dict['param'] = params
     template_dict['level'] = levels
     template_dict['product'] = products
-    #template_dict['product'] = '6-hour Forecast'
     template_dict['slat'] = -90
     template_dict['nlat'] = 90
     template_dict['wlon'] = -180
@@ -147,13 +151,13 @@ def request_data(args):
                         requests_to_download.remove(request_id)
                         if args.purge: rc.purge_request(request_id)
 
+                print('Iteration ended, waiting {} seconds'.format(WAIT_INTERVAL))
+                time.sleep(WAIT_INTERVAL)
+                
             except Exception:
                 import traceback
                 traceback.print_exc()
-
-            finally:
-                time.sleep(60*5)
-                #time.sleep(3)
+                time.sleep(WAIT_INTERVAL)
 
 def main():
     import argparse
