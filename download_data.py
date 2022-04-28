@@ -40,7 +40,7 @@ def get_precip_products(metadata):
     param_vars = list(filter(lambda x: x['param'] == 'A PCP', metadata))
     #products = list(set([item['product'] for item in param_vars if '(initial+0 ' in item['product']]))
     #products = list(set([item['product'] for item in param_vars if item['product'].startswith('3-hour') or item['product'].startswith('6-hour')]))
-    products = list(set([item['product'] for item in param_vars if item['product'].startswith('12-hour')]))
+    products = sorted(list(set([item['product'] for item in param_vars if item['product'].startswith('12-hour')])))[1:]
     return products
 
 def get_solar_products(metadata):
