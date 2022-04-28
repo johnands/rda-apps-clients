@@ -39,7 +39,8 @@ def get_precip_products(metadata):
     # precipitation - total accumulated only available after 2019-06-12, before that only 3- and 6-hour accumulated are available
     param_vars = list(filter(lambda x: x['param'] == 'A PCP', metadata))
     #products = list(set([item['product'] for item in param_vars if '(initial+0 ' in item['product']]))
-    products = list(set([item['product'] for item in param_vars if item['product'].startswith('3-hour') or item['product'].startswith('6-hour')]))
+    #products = list(set([item['product'] for item in param_vars if item['product'].startswith('3-hour') or item['product'].startswith('6-hour')]))
+    products = list(set([item['product'] for item in param_vars if item['product'].startswith('12-hour')]))
     return products
 
 def get_solar_products(metadata):
