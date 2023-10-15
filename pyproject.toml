@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "rda-apps-clients"
+version = "0.1.0"
+description = "Project to download openly available historical GFS weather data."
+authors = ["John-Anders Stende <john@montel.no>"]
+readme = "README.md"
+packages = [{include = "rda_apps_clients"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+requests = "^2.31.0"
+pygrib = "^2.1.4"
+xarray = "^2023.9.0"
+netcdf4 = "^1.6.4"
+pendulum = "^2.1.2"
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.25.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

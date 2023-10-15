@@ -49,6 +49,11 @@ def get_solar_products(metadata):
     products = list(set([item['product'] for item in param_vars]))
     return products
 
+def get_cloud_cover_products(metadata):
+    param_vars = list(filter(lambda x: x['param'] == 'T CDC', metadata))
+    products = list(set([item['product'] for item in param_vars if 'Forecast' in item['product']]))
+    return products
+
 def get_parameter_set(set_name, metadata):
     if set_name == 'all':
         params = 'TMP/U GRD/V GRD/R H/DSWRF/A PCP/PRMSL'
@@ -79,6 +84,11 @@ def get_parameter_set(set_name, metadata):
         params = 'A PCP'
         levels = 'SFC:0'
         products = '/'.join(get_precip_products(metadata))
+        return params, levels, products
+    elif set_name == 'cloud_cover':
+        params = 'T CDC'
+        levels = 'EATM:0'
+        products = '/'.join(get_cloud_cover_products(metadata))
         return params, levels, products
     else:
         raise ValueError('Parameter set {} not implemented'.format(set_name))
