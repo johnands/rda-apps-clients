@@ -4,15 +4,15 @@ import os
 import src.python.rdams_client as rc
 
 
-WAIT_INTERVAL = int(os.getenv('WAIT_INTERVAL', 60*10))
+WAIT_INTERVAL = int(os.getenv('WAIT_INTERVAL', 60*5))
+#WAIT_INTERVAL = int(os.getenv('WAIT_INTERVAL', 10))
 
 
-def download_when_ready(request_id, target_dir='./data'):
+def download_when_ready(request_id, target_dir='./data_cache/'):
     while True:
         try:
             response = rc.get_status(request_id)
-            request_status = response['result']['status']
-            print(request_status)
+            request_status = response['data']['status']
 
             if request_status == 'Completed':
                 start = time.time()
@@ -94,12 +94,16 @@ def get_parameter_set(set_name, metadata):
         raise ValueError('Parameter set {} not implemented'.format(set_name))
 
 def split_time_interval(from_dt, to_dt):
-    intervals = list((to_dt - from_dt).range('months', 3))
+    # one month of data per request is recommended for hourly data
+    intervals = list((to_dt - from_dt).range('months', 1))
     if len(intervals) == 1:
         intervals = [(from_dt, to_dt)]
     else:
         intervals = [(intervals[idx], intervals[idx+1]) for idx in range(len(intervals) - 1)]
         if intervals[-1][1] < to_dt: intervals.append((intervals[-1][1], to_dt))
+   
+    # do not include the last day
+    intervals = [(interval[0], interval[1].subtract(days=1)) for interval in intervals]
     return intervals
 
 def request_data(args):
@@ -109,12 +113,12 @@ def request_data(args):
 
     dataset_id = 'ds084.1'
     response = rc.get_control_file_template(dataset_id)
-    template = response['result']['template']
+    template = response['data']['template']
     template_dict = rc.read_control_file(template)
 
     # get selected products for all parameters
     metadata_response = rc.query(['-get_metadata', dataset_id])
-    metadata = metadata_response['result']['data']
+    metadata = metadata_response['data']['data']
     params, levels, products = get_parameter_set(args.param_set, metadata)
 
     print('Requesting following data:')
@@ -142,18 +146,18 @@ def request_data(args):
                 print('\nNew iteration:')
                 print('time intervals not requested:', time_intervals_not_requested)
                 print('requests to download:', requests_to_download)
-                for start_date, end_date in sorted(list(time_intervals_not_requested)):
+                for start_date, end_date in sorted(list(time_intervals_not_requested), key=lambda x: x[0], reverse=True):
                     print('Requesting data from {} to {}'.format(start_date, end_date))
                     
                     template_dict['date'] = '{}0000/to/{}0000'.format(start_date.format('YYYYMMDD'), end_date.format('YYYYMMDD'))
 
                     response = rc.submit_json(template_dict)
-                    if response['code'] != 200:
+                    if response['http_response'] != 200:
                         print('Request could not be made:\n{}'.format(response))
                         continue
                     
                     time_intervals_not_requested.remove((start_date, end_date))
-                    if args.download: requests_to_download.add(response['result']['request_id'])
+                    if args.download: requests_to_download.add(response['data']['request_id'])
                 
                 if args.download:
                     for request_id in sorted(list(requests_to_download)):
@@ -200,7 +204,7 @@ def main():
             if args.purge: rc.purge_request(args.request_id)
         else:
             status = rc.get_status()
-            for data in status['result']:
+            for data in status['data']:
                 request_id = data['request_index']
                 print('Downloading request with id {}'.format(request_id))
                 
@@ -209,8 +213,9 @@ def main():
     else:
         if args.request_id == 'all':
             status = rc.get_status()
-            for data in status['result']:
-                response = rc.purge_request(data['request_index'])
+            for data in status['data']:
+                print(f"Purging request {data['request_index']}")
+                response = rc.purge_request(str(data['request_index']))
                 print(response)
         else:
             response = rc.purge_request(args.request_id)
