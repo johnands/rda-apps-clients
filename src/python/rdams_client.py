@@ -26,6 +26,7 @@ import json
 import argparse
 import codecs
 import pdb
+from utils.logger import scope_logger
 
 
 BASE_URL = 'https://rda.ucar.edu/api/'
@@ -248,7 +249,7 @@ def download_files(filelist, out_dir='.', cookie_file=None):
     for _file in filelist:
         file_base = os.path.basename(_file)
         out_file = out_dir + file_base
-        print('Downloading',file_base)
+        scope_logger.info(f'Downloading {file_base}')
         header = requests.head(_file, allow_redirects=True, stream=True)
         filesize = int(header.headers['Content-Length'])
         req = requests.get(_file, allow_redirects=True, stream=True)

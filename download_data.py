@@ -18,16 +18,34 @@ def download_when_ready(request_id, target_dir='./data_cache/'):
                 start = time.time()
                 rc.download(request_id, target_dir=target_dir)
                 end = time.time()
-                print('Time elapsed: {} s'.format(end - start))
+                print(pm.now(), 'Time elapsed: {} s'.format(end - start))
+                break
+            elif request_status == 'Error':
+                print(pm.now(), 'Request with id {} has status Error, skipping'.format(request_id))
                 break
                 
-            print('Not yet available. Waiting ' + str(WAIT_INTERVAL) + ' seconds.' )
+            print(pm.now(), 'Not yet available. Waiting ' + str(WAIT_INTERVAL) + ' seconds.' )
             time.sleep(WAIT_INTERVAL)
 
         except Exception:
             import traceback
             traceback.print_exc()
             time.sleep(WAIT_INTERVAL)
+
+def purge_request(request_id: str):
+    n_retries = 10
+    for _ in range(n_retries):
+        try:
+            response = rc.purge_request(request_id)
+            if response['http_response'] == 200:
+                print(pm.now(), f'Purge successful for request with id {request_id}')
+                break
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            time.sleep(10)
+    else:
+        print(pm.now(), f'Purge failed for request with id {request_id}')
 
 def get_instant_products(metadata):
     # wind/temperature/humidity/pressure - exclude analysis and averages
@@ -51,6 +69,17 @@ def get_solar_products(metadata):
 
 def get_cloud_cover_products(metadata):
     param_vars = list(filter(lambda x: x['param'] == 'T CDC', metadata))
+    products = list(set([item['product'] for item in param_vars if 'Forecast' in item['product']]))
+    return products
+
+def get_cloud_cover_old_products(metadata):
+    # cloud cover is average, as solar, before 2021-03-22
+    param_vars = list(filter(lambda x: x['param'] == 'DSWRF', metadata))
+    products = list(set([item['product'] for item in param_vars]))
+    return products
+
+def get_frozen_precip_products(metadata):
+    param_vars = list(filter(lambda x: x['param'] == 'CPOFP', metadata))
     products = list(set([item['product'] for item in param_vars if 'Forecast' in item['product']]))
     return products
 
@@ -90,6 +119,16 @@ def get_parameter_set(set_name, metadata):
         levels = 'EATM:0'
         products = '/'.join(get_cloud_cover_products(metadata))
         return params, levels, products
+    elif set_name == 'cloud_cover_old':
+        params = 'T CDC'
+        levels = 'EATM:0'
+        products = '/'.join(get_cloud_cover_old_products(metadata))
+        return params, levels, products
+    elif set_name == 'frozen_precip':
+        params = 'CPOFP'
+        levels = 'SFC:0'
+        products = '/'.join(get_frozen_precip_products(metadata))
+        return params, levels, products
     else:
         raise ValueError('Parameter set {} not implemented'.format(set_name))
 
@@ -106,6 +145,11 @@ def split_time_interval(from_dt, to_dt):
     intervals = [(interval[0], interval[1].subtract(days=1)) for interval in intervals]
     return intervals
 
+def get_number_of_requests():
+    status = rc.get_status()
+    n_requests = len(status['data'])
+    return n_requests
+
 def request_data(args):
     from_dt = pm.parse(args.from_to[0], tz='UTC')
     to_dt = pm.parse(args.from_to[1], tz='UTC')
@@ -120,6 +164,10 @@ def request_data(args):
     metadata_response = rc.query(['-get_metadata', dataset_id])
     metadata = metadata_response['data']['data']
     params, levels, products = get_parameter_set(args.param_set, metadata)
+
+    # HACK
+    #products = '3-hour Forecast'
+    #products = '3-hour Average (initial+0 to initial+3)'
 
     print('Requesting following data:')
     print('Time range: {} to {} in {} batches'.format(from_dt, to_dt, len(time_intervals)))
@@ -137,36 +185,45 @@ def request_data(args):
     template_dict['elon'] = 180
     template_dict['targetdir'] = args.target_dir
     
-    answer = input('Is this okay (y/n)?')
+    answer = input('Is this okay (y/N)? ')
     if answer == 'y':
         time_intervals_not_requested = set(time_intervals)
         requests_to_download = set()
+        number_of_requests = get_number_of_requests()
         while len(time_intervals_not_requested) > 0 or len(requests_to_download) > 0:
             try:
-                print('\nNew iteration:')
-                print('time intervals not requested:', time_intervals_not_requested)
-                print('requests to download:', requests_to_download)
+                print(pm.now(), '\nNew iteration:')
+                print(pm.now(), 'time intervals not requested:', time_intervals_not_requested)
+                print(pm.now(), 'requests to download:', requests_to_download)
                 for start_date, end_date in sorted(list(time_intervals_not_requested), key=lambda x: x[0], reverse=True):
-                    print('Requesting data from {} to {}'.format(start_date, end_date))
+                    # can only have 11 requests at a time
+                    if number_of_requests >= 11:
+                        print(pm.now(), f'Request limit is reached, waiting for requests to be completed')
+                        break
+                    
+                    print(pm.now(), 'Requesting data from {} to {}'.format(start_date, end_date))
                     
                     template_dict['date'] = '{}0000/to/{}0000'.format(start_date.format('YYYYMMDD'), end_date.format('YYYYMMDD'))
 
                     response = rc.submit_json(template_dict)
                     if response['http_response'] != 200:
-                        print('Request could not be made:\n{}'.format(response))
+                        print(pm.now(), 'Request could not be made:\n{}'.format(response))
                         continue
                     
+                    number_of_requests += 1
                     time_intervals_not_requested.remove((start_date, end_date))
                     if args.download: requests_to_download.add(response['data']['request_id'])
                 
                 if args.download:
                     for request_id in sorted(list(requests_to_download)):
-                        print('Starting downloading service for request {}'.format(request_id))
+                        print(pm.now(), 'Starting downloading service for request {}'.format(request_id))
                         download_when_ready(request_id, target_dir=args.target_dir)
                         requests_to_download.remove(request_id)
                         if args.purge: rc.purge_request(request_id)
+                        number_of_requests -= 1
+                        print(f'Current number of requests: {number_of_requests}')
 
-                print('Iteration ended, waiting {} seconds'.format(WAIT_INTERVAL))
+                print(pm.now(), 'Iteration ended, waiting {} seconds'.format(WAIT_INTERVAL))
                 time.sleep(WAIT_INTERVAL)
                 
             except Exception:
@@ -204,22 +261,26 @@ def main():
             if args.purge: rc.purge_request(args.request_id)
         else:
             status = rc.get_status()
-            for data in status['data']:
-                request_id = data['request_index']
-                print('Downloading request with id {}'.format(request_id))
+            for request in status['data']:
+                if request['status'] != 'Completed':
+                    print(pm.now(), f'Request with id {request["request_index"]} is not eligible for download: {request["status"]}, skipping')
+                    continue
+
+                request_id = request['request_index']
+                print(pm.now(), 'Downloading request with id {}'.format(request_id))
                 
                 download_when_ready(request_id, target_dir=args.target_dir)
-                if args.purge: rc.purge_request(request_id)
+                if args.purge: purge_request(str(request_id))
     else:
         if args.request_id == 'all':
             status = rc.get_status()
             for data in status['data']:
-                print(f"Purging request {data['request_index']}")
-                response = rc.purge_request(str(data['request_index']))
-                print(response)
+                print(pm.now(), f"Purging request {data['request_index']}")
+                response = purge_request(str(data['request_index']))
+                print(pm.now(), response)
         else:
-            response = rc.purge_request(args.request_id)
-            print(response)
+            response = purge_request(args.request_id)
+            print(pm.now(), response)
 
 
 

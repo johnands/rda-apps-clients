@@ -13,10 +13,12 @@ pygrib = "^2.1.4"
 xarray = "^2023.9.0"
 netcdf4 = "^1.6.4"
 pendulum = "^2.1.2"
+pyyaml = "^6.0.1"
 
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.25.2"
+matplotlib = "^3.8.2"
 
 [build-system]
 requires = ["poetry-core"]

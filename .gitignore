@@ -1,3 +1,4 @@
-data_cache/
+data_cache
 *.txt
 *.pyc
+*.yaml
