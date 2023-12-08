@@ -14,6 +14,7 @@ for message in grib:
     print('Level:', message['level'])
     print('Grid type:', message['gridDefinitionDescription'])
     print('Step type:', message['stepType'])
+    print('End step:', message['endStep'])
     print('Step range:', message['startStep'], message['endStep'])
     print('Unit', message['parameterUnits'])
     print('Resolution lat/lon in degrees:', message['jDirectionIncrementInDegrees'], message['iDirectionIncrementInDegrees'])

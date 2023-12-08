@@ -161,15 +161,18 @@ def download_worker(request_id: int, target_dir: str) -> bool:
 
 def request_and_download_worker(request: Dict[str, str], target_dir: str) -> bool:
     while True:
-        scope_logger.info('Submitting request for new data')
-        response = request_wrapper(rda_client.submit_json, request)
+        with scope_logger.create_loggerscope(f'New data: {request["date"]}'):
+            response = request_wrapper(rda_client.submit_json, request)
+        
         if response.type == ResponseTypes.SUCCESS:
             request_id = response.response["data"]["request_id"]
             with scope_logger.create_loggerscope(f'request_id={request_id}'):
                 success = download_worker(request_id, target_dir)
                 return success
-        if response.type == ResponseTypes.ERROR:
+        
+        elif response.type == ResponseTypes.ERROR:
             time.sleep(SLEEP_INTERVAL)
+        
         elif response.type == ResponseTypes.EXCEPTION:
             return False
 
