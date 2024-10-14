@@ -1,0 +1,76 @@
+temperature:
+  parameters: [TMP]
+  levels:
+    HTGL: [2]
+  product_types: [instant]
+
+solar:
+  parameters: [DSWRF]
+  levels:
+    SFC: [0]
+  product_types: [average]
+
+wind_humidity_totalprecip_pressure:
+  parameters: ['U GRD', 'V GRD', 'R H', 'A PCP', PRMSL]
+  levels: 
+    HTGL: [2, 10, 100]
+    SFC: [0]
+    MSL: [0]
+  product_types: [instant, total_accumulated]
+
+wind_humidity_precip_pressure:
+  parameters: ['U GRD', 'V GRD', 'R H', 'A PCP', PRMSL]
+  levels: 
+    HTGL: [2, 10, 100]
+    SFC: [0]
+    MSL: [0]
+  product_types: [instant, six_hour_accumulated]
+
+precip_sixhour:
+  parameters: ['A PCP']
+  levels:
+    SFC: [0]
+  product_types: [six_hour_accumulated]
+
+total_cloud_cover:
+  parameters: ['T CDC']
+  levels:
+    EATM: [0]
+  product_types: [average]
+
+frozen_precip:
+  parameters: [CPOFP]
+  level:
+    SFC: [0]
+  product_types: [instant]
+
+apptemp_albedo_windgust:
+  parameters: [APTMP, ALBDO, GUST]
+  levels:
+    HTGL: [2]
+    SFC: [0]
+  product_types: [instant, average]
+
+all_parameters:
+  parameters: [TMP, DSWRF, 'U GRD', 'V GRD', 'R H', 'A PCP', PRMSL, 'T CDC', CPOFP, APTMP, ALBDO, GUST]
+  levels:
+    HTGL: [2, 10, 100]
+    SFC: [0]
+    MSL: [0]
+    EATM: [0]
+  product_types: [instant, average, total_accumulated, six_hour_accumulated]
+
+original_parameters_minus_temp:
+  parameters: [DSWRF, 'U GRD', 'V GRD', 'R H', 'A PCP', PRMSL]
+  levels:
+    HTGL: [2, 10, 100]
+    SFC: [0]
+    MSL: [0]
+  product_types: [instant, average, six_hour_accumulated]
+
+frozenprecip_gust_apptemp_albedo:
+  parameters: [CPOFP, GUST, APTMP, ALBDO]
+  levels:
+    HTGL: [2]
+    SFC: [0]
+  product_types: [instant, average]

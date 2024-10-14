@@ -5,6 +5,7 @@ description = "Project to download openly available historical GFS weather data.
 authors = ["John-Anders Stende <john@montel.no>"]
 readme = "README.md"
 packages = [{include = "rda_apps_clients"}]
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -19,6 +20,7 @@ pyyaml = "^6.0.1"
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.25.2"
 matplotlib = "^3.8.2"
+natsort = "^8.4.0"
 
 [build-system]
 requires = ["poetry-core"]

@@ -26,7 +26,8 @@ import json
 import argparse
 import codecs
 import pdb
-from utils.logger import scope_logger
+from pathlib import Path
+from src.utils.logger import scope_logger
 
 
 BASE_URL = 'https://rda.ucar.edu/api/'
@@ -236,20 +237,20 @@ def check_file_status(filepath, filesize):
     sys.stdout.write('%.3f %s' % (percent_complete, '% Completed'))
     sys.stdout.flush()
 
-def download_files(filelist, out_dir='.', cookie_file=None):
+def download_files(filelist, out_dir: Path, cookie_file=None):
     """Download files in a list.
 
     Args:
         filelist (list): List of web files to download.
-        out_dir (str): directory to put downloaded files
+        out_dir (Path): directory to put downloaded files
 
     Returns:
         None
     """
     for _file in filelist:
         file_base = os.path.basename(_file)
-        out_file = out_dir + file_base
-        scope_logger.info(f'Downloading {file_base}')
+        out_file = str(out_dir / file_base)
+        scope_logger.info(f'Downloading {out_file}')
         header = requests.head(_file, allow_redirects=True, stream=True)
         filesize = int(header.headers['Content-Length'])
         req = requests.get(_file, allow_redirects=True, stream=True)
@@ -296,7 +297,7 @@ def get_summary(ds):
     ret = requests.get(encode_url(url,token))
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 def get_metadata(ds):
     """Return metadata of dataset.
@@ -314,7 +315,7 @@ def get_metadata(ds):
     ret = requests.get(encode_url(url,token))
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 def get_all_params(ds):
     """Return set of parameters for a dataset.
@@ -349,7 +350,7 @@ def get_param_summary(ds):
     ret = requests.get(encode_url(url,token))
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 
 def submit_json(json_file):
@@ -377,7 +378,7 @@ def submit_json(json_file):
     ret = requests.post(encode_url(url,token), json=control_dict)
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 def submit(control_file_name):
     """Submit a RDA subset or format conversion request.
@@ -413,7 +414,7 @@ def get_status(request_idx=None):
     ret = requests.get(encode_url(url,token))
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 def get_filelist(request_idx):
     """Gets filelist for request
@@ -432,10 +433,10 @@ def get_filelist(request_idx):
 
     check_status(ret)
 
-    return ret.json()
+    return ret
 
 
-def download(request_idx, target_dir='.'):
+def download(request_idx, target_dir: Path):
     """Download files given request Index
 
     Args:
@@ -444,7 +445,7 @@ def download(request_idx, target_dir='.'):
     Returns:
         None
     """
-    ret = get_filelist(request_idx)
+    ret = get_filelist(request_idx).json()
     if len(ret['data']) == 0:
         return ret
 
@@ -475,7 +476,7 @@ def globus_download(request_idx):
     ret = requests.get(encode_url(url,token))
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 def get_control_file_template(ds):
     """Write a control file for use in subset requests.
@@ -493,7 +494,7 @@ def get_control_file_template(ds):
     ret = requests.get(encode_url(url,token))
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 def write_control_file_template(ds, write_location='./'):
     """Write a control file for use in subset requests.
@@ -506,7 +507,7 @@ def write_control_file_template(ds, write_location='./'):
     Returns:
         dict: JSON decoded result of the query.
     """
-    _json = get_control_file_template(ds)
+    _json = get_control_file_template(ds).json()
     control_str = _json['data']['template']
 
     template_filename = write_location + add_ds_str(ds) + '_control.ctl'
@@ -536,7 +537,7 @@ def purge_request(request_idx):
     ret = requests.delete(encode_url(url,token))
 
     check_status(ret)
-    return ret.json()
+    return ret
 
 def get_selected_function(args_dict):
     """Returns correct function based on options.
@@ -569,6 +570,6 @@ if __name__ == "__main__":
     #query(sys.argv[1:])
 
     response = get_status()
-    for data in response['result']:
+    for data in response.json()['result']:
         print(data['request_index'])
 

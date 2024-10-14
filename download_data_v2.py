@@ -3,48 +3,18 @@ import pendulum as pm
 from typing import *
 import yaml
 from dataclasses import dataclass
-import itertools
 import queue
 import threading
 import traceback
 import requests
-from enum import Enum, auto
+import os
+from pathlib import Path
 import src.python.rdams_client as rda_client
-from settings import SLEEP_INTERVAL
-from utils.logger import scope_logger
+from src.settings import SLEEP_INTERVAL
+from src.utils.logger import scope_logger
+from src.utils.entities import *
+from src.config import parse_config, parse_time_intervals
 
-
-@dataclass
-class RequestConfig:
-    parameters: str
-    levels: str
-    products: str
-
-@dataclass
-class Area:
-    lat_min: float
-    lat_max: float
-    lon_min: float
-    lon_max: float
-
-class Areas:
-    GLOBAL = Area(-90, 90, -180, 180)
-    EUROPE = Area(32, 74, -28, 46)
-
-@dataclass
-class Task:
-    name: str
-    argument: int | Dict[str, str]
-
-class ResponseTypes(Enum):
-    SUCCESS = auto()
-    ERROR = auto()
-    EXCEPTION = auto()
-
-@dataclass
-class Response:
-    type: ResponseTypes
-    response: Dict[str, Any] | None
 
 def request_wrapper(func: Callable, *args, **kwargs) -> Response:
     n_retries = 20
@@ -52,12 +22,24 @@ def request_wrapper(func: Callable, *args, **kwargs) -> Response:
         try:
             scope_logger.info('Making RDA API request')
             response = func(*args, **kwargs)
+
+            if isinstance(response, requests.Response):
+                status_code = response.status_code
+                convert_to_json = True
+            elif isinstance(response, dict):
+                status_code = response['http_response']
+                convert_to_json = False
+            else:
+                raise ValueError('Response type not recognized')
             
-            if response['http_response'] == 200:
+            if status_code == 200:
                 scope_logger.info('Request made successfully')
+                if convert_to_json: response = response.json()
                 return Response(ResponseTypes.SUCCESS, response)
             else:
-                scope_logger.info(f'Request was not successful: status={response["status"]}, http_response={response["http_response"]}, error_messages={response["error_messages"]}')
+                scope_logger.info(f'Request was not successful: status_code={status_code}')
+                if convert_to_json: response = response.json()
+                scope_logger.info(f'JSON response: status={response["status"]}, http_response={response["http_response"]}, error_messages={response["error_messages"]}')
                 return Response(ResponseTypes.ERROR, response)
         
         except Exception:
@@ -68,40 +50,6 @@ def request_wrapper(func: Callable, *args, **kwargs) -> Response:
     scope_logger.info('Request could not be made, giving up')
     return Response(ResponseTypes.EXCEPTION, None)
 
-def get_instant_products(metadata):
-    param_vars = list(filter(lambda x: x['param'] == 'TMP', metadata))
-    products = list(set([item['product'] for item in param_vars if 'Forecast' in item['product']]))
-    return products
-
-def get_accumulated_products(metadata):
-    param_vars = list(filter(lambda x: x['param'] == 'A PCP', metadata))
-    products = list(set([item['product'] for item in param_vars ]))
-    return products
-
-def get_average_products(metadata):
-    param_vars = list(filter(lambda x: x['param'] == 'DSWRF', metadata))
-    products = list(set([item['product'] for item in param_vars]))
-    return products
-
-def get_products_by_type(metadata: Dict[str, Any], product_type: str) -> str:
-    if product_type == 'instant':
-        return get_instant_products(metadata)
-    elif product_type == 'accumulated':
-        return get_accumulated_products(metadata)
-    elif product_type == 'average':
-        return get_average_products(metadata)
-    else:
-        raise ValueError('Product type {} not recognized'.format(product_type))
-
-def parse_config(config: Dict[str, Any], metadata: Dict[str, Any]) -> RequestConfig:
-    """
-    Parse the configuration file and return a dictionary with the parsed values.
-    """
-
-    parameters = '/'.join(config['parameters'])
-    levels = ';'.join([f'{name}:{"/".join([str(value) for value in values])}' for name, values in config['levels'].items()])
-    products ='/'.join(itertools.chain(*[get_products_by_type(metadata, product_type) for product_type in config['product_types']]))
-    return RequestConfig(parameters, levels, products)
 
 def split_time_interval(from_dt, to_dt):
     # one month of data per request is recommended for hourly data
@@ -112,11 +60,13 @@ def split_time_interval(from_dt, to_dt):
         intervals = [(intervals[idx], intervals[idx+1]) for idx in range(len(intervals) - 1)]
         if intervals[-1][1] < to_dt: intervals.append((intervals[-1][1], to_dt))
    
-    # do not include the last day
-    intervals = [(interval[0], interval[1].subtract(days=1)) for interval in intervals]
+    # make sure the intervals don't overlap
+    last_interval = intervals[-1]
+    intervals = [(interval[0], interval[1].subtract(hours=6)) for interval in intervals[:-1]]
+    intervals.append(last_interval)
     return intervals
 
-def download_worker(request_id: int, target_dir: str) -> bool:
+def download_worker(request_id: int, target_dir: Path) -> bool:
     scope_logger.info(f'Starting downloading service for request {request_id}')
     start_time = time.time()
     while True:
@@ -133,7 +83,7 @@ def download_worker(request_id: int, target_dir: str) -> bool:
             if request_status == 'Completed':
                 scope_logger.info('Request is ready for download')
                 start = time.time()
-                response = request_wrapper(rda_client.download, request_id, target_dir=target_dir)
+                response = request_wrapper(rda_client.download, request_id, target_dir)
                 scope_logger.info(f'Time elapsed: {time.time() - start} s')
                 
                 # keep request if unsuccessful to debug later
@@ -159,28 +109,36 @@ def download_worker(request_id: int, target_dir: str) -> bool:
             traceback.print_exc()
             time.sleep(SLEEP_INTERVAL)
 
-def request_and_download_worker(request: Dict[str, str], target_dir: str) -> bool:
+def request_and_download_worker(request: Dict[str, str], target_dir: Path) -> bool:
+    scope_logger.info(f'Starting request service for date interval {request["date"]}')
+    start_time = time.time()
     while True:
+        # disable request if it has been running for more than 1 hour
+        if time.time() - start_time > 60*60:
+            scope_logger.info(f'Have tried to request data for more than 1 hour, skipping')
+            return False
+        
         with scope_logger.create_loggerscope(f'New data: {request["date"]}'):
             response = request_wrapper(rda_client.submit_json, request)
         
         if response.type == ResponseTypes.SUCCESS:
+            if 'request_id' not in response.response["data"]:
+                scope_logger.info('Could not obtain request_id, skipping')
+                return False
+            
             request_id = response.response["data"]["request_id"]
             with scope_logger.create_loggerscope(f'request_id={request_id}'):
                 success = download_worker(request_id, target_dir)
                 return success
-        
-        elif response.type == ResponseTypes.ERROR:
+            
+        else:
             time.sleep(SLEEP_INTERVAL)
-        
-        elif response.type == ResponseTypes.EXCEPTION:
-            return False
 
 @dataclass
 class ThreadRequests:
     tasks: queue.Queue[Task] = queue.Queue()
 
-    def __init__(self, request_dict: Dict[str, str], date_intervals: List[str], existing_request_ids: List[int], target_dir: str, n_threads: int = 11) -> None:
+    def __init__(self, request_dict: Dict[str, str], date_intervals: List[str], existing_request_ids: List[int], target_dir: Path, n_threads: int = 11) -> None:
         self.target_dir = target_dir
         self.log_path = f'./data_cache/failed_tasks_{pm.now("Europe/Oslo").to_datetime_string()}.log'
         self.n_threads = min(len(date_intervals) + len(existing_request_ids), n_threads)
@@ -193,7 +151,7 @@ class ThreadRequests:
         for from_dt, to_dt in reversed(date_intervals):
             # beware of python's weird scoping rules!!!
             request_dict_copy = request_dict.copy()
-            request_dict_copy['date'] = '{}0000/to/{}0000'.format(from_dt.format('YYYYMMDD'), to_dt.format('YYYYMMDD'))
+            request_dict_copy['date'] = '{}00/to/{}00'.format(from_dt.format('YYYYMMDDHH'), to_dt.format('YYYYMMDDHH'))
             self.tasks.put(Task('request_new_data', request_dict_copy))
 
     def run(self) -> None:
@@ -230,20 +188,27 @@ def request_data(args):
     with open('./config/request_configs.yaml', 'r') as file:
         config = yaml.safe_load(file)
     
-    dataset_id = 'ds084.1'
+    dataset_id = 'd084001'
     response = request_wrapper(rda_client.get_metadata, dataset_id)
     assert response.type == ResponseTypes.SUCCESS, scope_logger.info('Could not get metadata, aborting')
     metadata = response.response['data']['data']
 
-    scope_logger.info(config[args.config_item])
-    config = parse_config(config[args.config_item], metadata)
+    # all parameters have the same grid definition
+    grid_definition = metadata[0]['griddef']
 
-    from_dt = pm.parse(args.from_to[0], tz='UTC')
-    to_dt = pm.parse(args.from_to[1], tz='UTC')
-    time_intervals = split_time_interval(from_dt, to_dt)
+    scope_logger.info(config[args.config_item])
+    config = parse_config(config[args.config_item])
 
     scope_logger.info('Requesting following data:')
-    scope_logger.info(f'Time range: {from_dt} to {to_dt} in {len(time_intervals)} batches')
+    if args.time_intervals_file is not None:
+        time_intervals = parse_time_intervals(args.time_intervals_file)
+        scope_logger.info(f'{len(time_intervals)} time intervals from file')
+    else:
+        from_dt = pm.parse(args.from_to[0], tz='UTC')
+        to_dt = pm.parse(args.from_to[1], tz='UTC')
+        time_intervals = split_time_interval(from_dt, to_dt)
+        scope_logger.info(f'Time range: {from_dt} to {to_dt} in {len(time_intervals)} batches')
+
     scope_logger.info(f'Parameters: {config.parameters}')
     scope_logger.info(f'Levels: {config.levels}')
     scope_logger.info(f'Products:\n{config.products}')
@@ -263,7 +228,9 @@ def request_data(args):
     else:
         raise ValueError('Area {} not recognized'.format(args.area))
 
+    request_dict['dataset'] = dataset_id
     request_dict['datetype'] = 'init'
+    request_dict['griddef'] = grid_definition
     request_dict['param'] = config.parameters
     request_dict['level'] = config.levels
     request_dict['product'] = config.products
@@ -273,13 +240,19 @@ def request_data(args):
     request_dict['elon'] = area.lon_max
     request_dict['targetdir'] = args.target_dir
 
+    # delete optional parameters
+    del request_dict['gridproj']
+    del request_dict['oformat']
+    del request_dict['groupindex']
+    del request_dict['compression']
+
     existing_request_ids = []
-    if args.include_existing:
+    if args.include_existing_requests:
         response = request_wrapper(rda_client.get_status)
         assert response.type == ResponseTypes.SUCCESS, scope_logger.info('Could not get status of existing requests, aborting')
         for request in response.response['data']: existing_request_ids.append(request['request_index'])
 
-    runner = ThreadRequests(request_dict, time_intervals, existing_request_ids, args.target_dir)
+    runner = ThreadRequests(request_dict, time_intervals, existing_request_ids, Path(args.target_dir))
     runner.run()
 
 def main():
@@ -289,23 +262,26 @@ def main():
     subparser = parser.add_subparsers(title='command', dest='command')
 
     request_parser = subparser.add_parser('request', help='Make a new data request, and (optional) download.')
-    request_parser.add_argument('--config_item', required=True)
-    request_parser.add_argument('--from_to', required=True, nargs=2)
-    request_parser.add_argument('--area', required=True, choices=['global', 'europe'])
-    request_parser.add_argument('--target_dir', required=True)
-    request_parser.add_argument('--include_existing', action='store_true')
-    request_parser.add_argument('--download', action='store_true')
-    request_parser.add_argument('--purge', action='store_true')
+    request_parser.add_argument('--config_item', required=True, help='Request configuration in config/request_configs.yaml')
+    request_parser.add_argument('--from_to', required=False, nargs=2, help='Date interval to fetch data for')
+    request_parser.add_argument('--area', required=True, choices=['global', 'europe'], help='Predefined geographical area to fetch')
+    request_parser.add_argument('--target_dir', required=True, help='Directory to save the data to')
+    request_parser.add_argument('--include_existing_requests', action='store_true', help='Include any requests made previously in the download process')
+    request_parser.add_argument('--download', action='store_true', help='Download all requested files')
+    request_parser.add_argument('--purge', action='store_true', help='Purge all requests after download is completed')
+    request_parser.add_argument('--time_intervals_file', help='File with set of time intervals to fetch data for (arg from/to will be ignored)')
 
     download_parser = subparser.add_parser('download', help='Download previously requested dataset.')
     download_parser.add_argument('--request_ids', nargs='*', required=False, help='Download a specific request only, defaults to all active requests.')
-    download_parser.add_argument('--target_dir', required=True)
-    download_parser.add_argument('--purge', action='store_true')
+    download_parser.add_argument('--target_dir', required=True, help='Directory to save the data to')
+    download_parser.add_argument('--purge', action='store_true', help='Purge all requests after download is completed')
 
     purge_parser = subparser.add_parser('purge', help='Purge a previously requested dataset.')
     purge_parser.add_argument('--request_ids', nargs='*', required=True, help='If "all", purge all active requests.')
 
     args = parser.parse_args()
+    os.makedirs(args.target_dir, exist_ok=True)
+
     if args.command == 'request':
         request_data(args)
     
@@ -317,7 +293,7 @@ def main():
             assert status.type == ResponseTypes.SUCCESS, scope_logger.info('Could not get status of existing requests, aborting')
             existing_request_ids = [request['request_index'] for request in status.response['data']]
             
-        runner = ThreadRequests(dict(), list(), existing_request_ids, args.target_dir)
+        runner = ThreadRequests(dict(), list(), existing_request_ids, Path(args.target_dir))
         runner.run()
     
     else:
