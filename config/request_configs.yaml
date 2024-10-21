@@ -40,7 +40,7 @@ total_cloud_cover:
 
 frozen_precip:
   parameters: [CPOFP]
-  level:
+  levels:
     SFC: [0]
   product_types: [instant]
 
