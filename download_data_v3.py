@@ -239,10 +239,10 @@ def main():
 
     request_parser = subparser.add_parser('request', help='Service to request and download data for specified time interval(s)')
     request_parser.add_argument('--config_item', required=True, help='Request configuration in config/request_configs.yaml')
-    request_parser.add_argument('--from_to', nargs=2, help='Date interval to fetch data for')
+    request_parser.add_argument('--from_to', nargs=2, help='Date interval to fetch data for, format: "YYYY-MM-DDTHH:MM')
     request_parser.add_argument('--area', required=True, choices=['global', 'europe'], help='Predefined geographical area to fetch')
     request_parser.add_argument('--target_dir', required=True, help='Directory to download the data to')
-    request_parser.add_argument('--time_intervals_file', help='File with set of time intervals to fetch data for (arg from/to will be ignored)')
+    request_parser.add_argument('--time_intervals_file', help='CSV file with set of time intervals to fetch data for (arg from/to will be ignored)')
 
     download_parser = subparser.add_parser('download', help='Download previously requested datasets.')
     download_parser.add_argument('--request_ids', nargs='*', required=False, help='Download a specific request only, defaults to all active requests.')
