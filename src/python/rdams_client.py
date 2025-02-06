@@ -445,11 +445,12 @@ def download(request_idx, target_dir: Path):
     Returns:
         None
     """
-    ret = get_filelist(request_idx).json()
-    if len(ret['data']) == 0:
+    ret = get_filelist(request_idx)
+    ret_json = ret.json()
+    if len(ret_json['data']) == 0:
         return ret
 
-    filelist = ret['data']['web_files']
+    filelist = ret_json['data']['web_files']
 
     token = get_authentication()
 

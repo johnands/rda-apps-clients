@@ -17,39 +17,24 @@ from src.utils.entities import *
 from src.config import parse_config, parse_time_intervals
 
 
-def request_wrapper(func: Callable, *args, **kwargs) -> Response:
-    n_retries = 20
+def request_wrapper(func: Callable, *args, **kwargs) -> Dict[str, Any] | None:
+    response = None
+    n_retries = 10
     for _ in range(n_retries):
         try:
-            scope_logger.info('Making RDA API request')
-            response = func(*args, **kwargs)
+            #scope_logger.info('Making RDA API request')
+            response: requests.Response = func(*args, **kwargs)
+            if response.status_code != 200: print('Request failed with status code', response.status_code)
+            response = response.json()
+            return response
 
-            if isinstance(response, requests.Response):
-                status_code = response.status_code
-                convert_to_json = True
-            elif isinstance(response, dict):
-                status_code = response['http_response']
-                convert_to_json = False
-            else:
-                raise ValueError('Response type not recognized')
-            
-            if status_code == 200:
-                scope_logger.info('Request made successfully')
-                if convert_to_json: response = response.json()
-                return Response(ResponseTypes.SUCCESS, response)
-            else:
-                scope_logger.error(f'Request was not successful: status_code={status_code}')
-                if convert_to_json: response = response.json()
-                scope_logger.error(f'JSON response: status={response["status"]}, http_response={response["http_response"]}, error_messages={response["error_messages"]}')
-                return Response(ResponseTypes.ERROR, response)
-        
         except Exception:
             scope_logger.error('There was an exception during the request, trying again in 10 seconds')
             traceback.print_exc()
-            time.sleep(10)
+            time.sleep(5)
 
     scope_logger.info('Request could not be made, giving up')
-    return Response(ResponseTypes.EXCEPTION, None)
+    return None
 
 def split_time_interval(from_dt: PmDateTime, to_dt: PmDateTime) -> List[Tuple[PmDateTime, PmDateTime]]:
     # one month of data per request is recommended for hourly data
@@ -66,11 +51,10 @@ def split_time_interval(from_dt: PmDateTime, to_dt: PmDateTime) -> List[Tuple[Pm
     intervals.append(last_interval)
     return intervals
 
-def write_request_error_to_log(log_path: str, request_dict: Dict[str, str]) -> None:
+def write_request_error_to_log(log_path: str, from_dt: PmDateTime, to_dt: PmDateTime, message: str) -> None:
     try:
-        start_dt, end_dt = request_dict['date'].split('/to/')
         with open(log_path, 'a') as file:
-            file.write(f'{pm.now("Europe/Oslo").format("YYYYMMDDTHHmm")} request failed {start_dt} {end_dt}\n')
+            file.write(f'{pm.now("Europe/Oslo")} Request failed {from_dt.format("YYYYMMDDHHmm")} {to_dt.format("YYYYMMDDHHmm")} {message}\n')
 
     except Exception:
         scope_logger.error('Could not write to log file')
@@ -97,25 +81,24 @@ def download_worker(request_id: int, target_dir: Path, log_path: str) -> None:
         scope_logger.info(f'Time elapsed: {time.time() - start} s')
         
         # keep request if unsuccessful to debug later
-        if response.type == ResponseTypes.SUCCESS: 
+        if response is not None: 
             scope_logger.info('Download completed successfully, purging request')
         else:
             scope_logger.info('Could not download files, purging request')
-            write_data_error_to_log(log_path, response.response['data'][0])
+            write_data_error_to_log(log_path, response['data'][0])
             
     except Exception:
         scope_logger.error('Exception in download worker, writing to error log')
         traceback.print_exc()
-        write_data_error_to_log(log_path, response.response['data'][0])
+        write_data_error_to_log(log_path, response['data'][0])
 
     finally:
+        print(f'Purging request {request_id}')
         request_wrapper(rda_client.purge_request, str(request_id))
 
 def setup_requests(config_item: str, area: str, from_dt: PmDateTime | None = None, to_dt: PmDateTime | None = None, 
                   time_intervals_file: str | None = None) -> tuple[Dict[str, str], List[Tuple[PmDateTime, PmDateTime]]]:
-    dataset_id = 'd084001'
-    grid_definition = '1440:721:90N:0E:90S:359.75E:0.25:0.25'
-
+    
     with open('./config/request_configs.yaml', 'r') as file:
         config = yaml.safe_load(file)
     
@@ -136,9 +119,10 @@ def setup_requests(config_item: str, area: str, from_dt: PmDateTime | None = Non
     answer = input('Is this okay (y/N)? ')
     if answer != 'y': return 
 
+    dataset_id = 'd084001'
     response = request_wrapper(rda_client.get_control_file_template, dataset_id)
-    assert response.type == ResponseTypes.SUCCESS, scope_logger.info('Could not get control file template, aborting')
-    control_file_template = response.response['data']['template']
+    assert response is not None, scope_logger.info('Could not get control file template, aborting')
+    control_file_template = response['data']['template']
     request_dict = rda_client.read_control_file(control_file_template)
 
     if area == 'global':
@@ -150,7 +134,8 @@ def setup_requests(config_item: str, area: str, from_dt: PmDateTime | None = Non
 
     request_dict['dataset'] = dataset_id
     request_dict['datetype'] = 'init'
-    request_dict['griddef'] = grid_definition
+    request_dict['griddef'] = '1440:721:90N:0E:90S:359.75E:0.25:0.25'
+    request_dict['gridproj'] = 'latLon'
     request_dict['param'] = config.parameters
     request_dict['level'] = config.levels
     request_dict['product'] = config.products
@@ -160,10 +145,9 @@ def setup_requests(config_item: str, area: str, from_dt: PmDateTime | None = Non
     request_dict['elon'] = area.lon_max
 
     # delete optional parameters
-    del request_dict['gridproj']
-    del request_dict['oformat']
-    del request_dict['groupindex']
-    del request_dict['compression']
+    if 'oformat' in request_dict: del request_dict['oformat']
+    if 'groupindex' in request_dict: del request_dict['groupindex']
+    if 'compression' in request_dict: del request_dict['compression']
 
     return request_dict, time_intervals
 
@@ -179,12 +163,12 @@ def service(request_dict: Dict[str, str], time_intervals: List[Tuple[PmDateTime,
         try:
             scope_logger.info('Checking status of requests')
             response = request_wrapper(rda_client.get_status)
-            if response.type != ResponseTypes.SUCCESS:
+            if response is None:
                 scope_logger.info('Could not get status of existing requests, trying later')
                 time.sleep(SLEEP_INTERVAL)
                 continue
             
-            current_requests = response.response['data']
+            current_requests = response['data']
             scope_logger.info(f'n_current_requests={len(current_requests)}, n_requests_error={len(requests_error)}, n_time_intervals={len(time_intervals)}, n_requests_downloaded={len(requests_downloaded)}')
             if len(current_requests) == len(requests_error) and len(time_intervals) == 0:
                 scope_logger.info('Nothing more to do, exiting')
@@ -198,6 +182,7 @@ def service(request_dict: Dict[str, str], time_intervals: List[Tuple[PmDateTime,
                 request_status = request['status']
                 if request_status == 'Completed' and request_id not in requests_downloaded:
                     with scope_logger.create_loggerscope(f'request_id={request_id}'):
+                        #download_worker(request_id, target_dir, log_path)
                         threading.Thread(target=download_worker, args=(request_id, target_dir, log_path)).start()
 
                     requests_downloaded.add(request_id)
@@ -221,9 +206,20 @@ def service(request_dict: Dict[str, str], time_intervals: List[Tuple[PmDateTime,
                 
                 scope_logger.info(f'Requesting data from {from_dt} to {to_dt}')
                 response = request_wrapper(rda_client.submit_json, request_dict_copy)
-                if response.type != ResponseTypes.SUCCESS:
-                    scope_logger.info('Could not submit request, skipping')
-                    write_request_error_to_log(log_path, request_dict_copy)
+                scope_logger.info(f'Response: {response}')
+
+                if response is not None:
+                    scope_logger.info('Request submitted successfully')
+                    response_status = response['status']
+                    if response_status == 'error':
+                        scope_logger.error('Could not fetch data for this time interval, writing to log and skipping')
+                        message = f'{response["http_response"]} {response["error_messages"]}'
+                        write_request_error_to_log(log_path, from_dt, to_dt, message)
+
+                else:
+                    scope_logger.info('Could not submit request, writing to log and skipping')
+                    message = 'Could not submit request'
+                    write_request_error_to_log(log_path, from_dt, to_dt, message)
 
             time.sleep(SLEEP_INTERVAL)
 

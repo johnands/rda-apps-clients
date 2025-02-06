@@ -30,7 +30,8 @@ control = {
     'product':'Analysis'
 }
 
-response = rc.submit_json(control)
+response = rc.submit_json(control).json()
+print(response)
 assert response['status'] == 'ok'
 rqst_id = response['result']['request_id']
 
